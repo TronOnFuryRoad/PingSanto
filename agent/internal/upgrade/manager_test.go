@@ -62,6 +62,44 @@ func (f *fakeApplier) Apply(ctx context.Context, plan Plan, state config.State) 
 	return f.result, f.err
 }
 
+type fakeInstaller struct {
+	mu            sync.Mutex
+	result        InstallResult
+	err           error
+	installCalls  int
+	rollbackCalls int
+}
+
+func (f *fakeInstaller) Install(ctx context.Context, sourcePath string) (InstallResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.installCalls++
+	if f.result.TargetPath == "" {
+		f.result.TargetPath = sourcePath
+	}
+	return f.result, f.err
+}
+
+func (f *fakeInstaller) Rollback(ctx context.Context, res InstallResult) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rollbackCalls++
+	return nil
+}
+
+type fakeRestarter struct {
+	mu    sync.Mutex
+	calls int
+	err   error
+}
+
+func (f *fakeRestarter) Restart(ctx context.Context, binaryPath string, args []string, env []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return f.err
+}
+
 type fakeReporter struct {
 	mu      sync.Mutex
 	reports []Report
@@ -145,8 +183,10 @@ func TestManagerPollAppliesPlan(t *testing.T) {
 			PreviousVersion: "1.0.0",
 			AppliedAt:       time.Unix(1730001000, 0).UTC(),
 			BundlePath:      "/opt/tmp/bundle",
+			BinaryPath:      "/opt/tmp/bundle/pingsanto-agent",
 		},
 	}
+	installer := &fakeInstaller{result: InstallResult{TargetPath: "/usr/local/bin/pingsanto-agent"}}
 	reporter := &fakeReporter{}
 
 	mgr := NewManager(
@@ -157,6 +197,7 @@ func TestManagerPollAppliesPlan(t *testing.T) {
 			UpdateState: store.Update,
 			PlanFetcher: fetcher,
 			Applier:     applier,
+			Installer:   installer,
 			Reporter:    reporter,
 			Now: func() time.Time {
 				return time.Unix(1730000000, 0)
@@ -175,12 +216,18 @@ func TestManagerPollAppliesPlan(t *testing.T) {
 	if applier.calls != 1 {
 		t.Fatalf("expected applier invoked once, got %d", applier.calls)
 	}
+	if installer.installCalls != 1 {
+		t.Fatalf("expected installer invoked once, got %d", installer.installCalls)
+	}
 	if len(reporter.reports) != 1 {
 		t.Fatalf("expected report emitted")
 	}
 	rep := reporter.reports[0]
 	if rep.Status != "success" || rep.CurrentVersion != "1.1.0" || rep.PreviousVersion != "1.0.0" {
 		t.Fatalf("unexpected report: %#v", rep)
+	}
+	if rep.Details["installed_path"] != "/usr/local/bin/pingsanto-agent" {
+		t.Fatalf("expected installed_path detail, got %#v", rep.Details)
 	}
 
 	store.mu.Lock()
@@ -192,7 +239,7 @@ func TestManagerPollAppliesPlan(t *testing.T) {
 	if final.Plan.ETag != `"etag-new"` {
 		t.Fatalf("plan not updated: %#v", final.Plan)
 	}
-	if final.Applied.Version != "1.1.0" || final.Applied.Path != "/opt/tmp/bundle" || final.Applied.LastError != "" {
+	if final.Applied.Version != "1.1.0" || final.Applied.Path != "/usr/local/bin/pingsanto-agent" || final.Applied.LastError != "" {
 		t.Fatalf("applied state incorrect: %+v", final.Applied)
 	}
 }
@@ -273,9 +320,13 @@ func TestManagerPollForceApplyOverridesPause(t *testing.T) {
 	}
 	applier := &fakeApplier{
 		result: ApplyResult{
-			AppliedVersion: "1.2.0",
+			AppliedVersion:  "1.2.0",
+			PreviousVersion: "1.0.0",
+			BundlePath:      "/tmp/bundle",
+			BinaryPath:      "/tmp/bundle/pingsanto-agent",
 		},
 	}
+	installer := &fakeInstaller{result: InstallResult{TargetPath: "/usr/local/bin/pingsanto-agent"}}
 
 	mgr := NewManager(
 		Config{DataDir: "/fake"},
@@ -284,6 +335,7 @@ func TestManagerPollForceApplyOverridesPause(t *testing.T) {
 			UpdateState: store.Update,
 			PlanFetcher: fetcher,
 			Applier:     applier,
+			Installer:   installer,
 			Now:         time.Now,
 		},
 	)
@@ -294,6 +346,9 @@ func TestManagerPollForceApplyOverridesPause(t *testing.T) {
 	}
 	if applier.calls != 1 {
 		t.Fatalf("expected force apply to execute despite pause")
+	}
+	if installer.installCalls != 1 {
+		t.Fatalf("expected installer invoked")
 	}
 }
 
@@ -341,5 +396,83 @@ func TestManagerPollPropagatesFetchError(t *testing.T) {
 	mgr.reload(ctx)
 	if err := mgr.poll(ctx); err == nil {
 		t.Fatalf("expected error when fetch fails")
+	}
+}
+
+func TestManagerRestartFailureRollsBack(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeStateStore{
+		state: config.State{
+			AgentID: "agt-1",
+			Upgrade: config.UpgradeState{
+				Channel: "stable",
+				Applied: config.UpgradeAppliedState{Version: "1.0.0"},
+			},
+		},
+	}
+	fetcher := &fakePlanFetcher{
+		result: PlanResult{
+			Plan: Plan{
+				Channel: "stable",
+				Artifact: PlanArtifact{
+					Version:    "1.2.0",
+					ForceApply: true,
+				},
+			},
+			ETag: `"etag-new"`,
+		},
+	}
+	applier := &fakeApplier{
+		result: ApplyResult{
+			AppliedVersion:  "1.2.0",
+			PreviousVersion: "1.0.0",
+			BundlePath:      "/tmp/bundle",
+			BinaryPath:      "/tmp/bundle/pingsanto-agent",
+		},
+	}
+	installer := &fakeInstaller{result: InstallResult{TargetPath: "/usr/local/bin/pingsanto-agent", BackupPath: "/usr/local/bin/pingsanto-agent.bak"}}
+	restarter := &fakeRestarter{err: errors.New("exec failed")}
+	reporter := &fakeReporter{}
+
+	mgr := NewManager(
+		Config{DataDir: "/fake"},
+		Dependencies{
+			Logger:      log.New(io.Discard, "", 0),
+			LoadState:   store.Load,
+			UpdateState: store.Update,
+			PlanFetcher: fetcher,
+			Applier:     applier,
+			Installer:   installer,
+			Restarter:   restarter,
+			Reporter:    reporter,
+			Now:         func() time.Time { return time.Unix(1730000000, 0) },
+			Args:        []string{"pingsanto-agent"},
+		},
+	)
+
+	mgr.reload(ctx)
+	if err := mgr.poll(ctx); err == nil {
+		t.Fatalf("expected restart failure to propagate")
+	}
+	if installer.rollbackCalls == 0 {
+		t.Fatalf("expected rollback invoked")
+	}
+	if restarter.calls != 1 {
+		t.Fatalf("expected restarter invoked once")
+	}
+	if len(reporter.reports) == 0 {
+		t.Fatalf("expected at least one report")
+	}
+	if reporter.reports[len(reporter.reports)-1].Status != "failed" {
+		t.Fatalf("expected final report to be failure")
+	}
+	store.mu.Lock()
+	final := store.state.Upgrade
+	store.mu.Unlock()
+	if final.Applied.Version != "1.0.0" {
+		t.Fatalf("expected rollback to previous version, got %s", final.Applied.Version)
+	}
+	if final.Applied.LastError == "" {
+		t.Fatalf("expected last error recorded")
 	}
 }

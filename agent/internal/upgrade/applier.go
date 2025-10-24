@@ -31,6 +31,7 @@ type ApplyResult struct {
 	AppliedAt       time.Time
 	BundlePath      string
 	ArtifactPath    string
+	BinaryPath      string
 }
 
 // PlanApplier applies upgrade plans and returns the outcome.
@@ -104,7 +105,12 @@ func (a *Applier) Apply(ctx context.Context, plan Plan, state config.State) (App
 		return result, err
 	}
 
+	binaryPath, err := findBinary(extractDir)
+	if err != nil {
+		return result, err
+	}
 	result.BundlePath = extractDir
+	result.BinaryPath = binaryPath
 	return result, nil
 }
 
@@ -221,4 +227,37 @@ func (a *Applier) now() time.Time {
 		return a.Now()
 	}
 	return time.Now()
+}
+
+func findBinary(root string) (string, error) {
+	var candidates []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&0o111 == 0 {
+			return nil
+		}
+		candidates = append(candidates, path)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("no executable binary found in bundle %q", root)
+	}
+	for _, candidate := range candidates {
+		if filepath.Base(candidate) == "pingsanto-agent" {
+			return candidate, nil
+		}
+	}
+	return candidates[0], nil
 }

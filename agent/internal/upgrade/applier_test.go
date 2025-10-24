@@ -71,6 +71,9 @@ func TestApplierApplySuccess(t *testing.T) {
 	if result.BundlePath == "" {
 		t.Fatalf("expected bundle path set")
 	}
+	if result.BinaryPath == "" {
+		t.Fatalf("expected binary path set")
+	}
 	content, err := os.ReadFile(filepath.Join(result.BundlePath, "README.txt"))
 	if err != nil {
 		t.Fatalf("read extracted file: %v", err)
@@ -109,6 +112,55 @@ func TestApplierApplyChecksumMismatch(t *testing.T) {
 	}
 }
 
+func TestApplierApplyMissingBinary(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	content := "no binary"
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "docs.txt",
+		Mode: 0o644,
+		Size: int64(len(content)),
+	}); err != nil {
+		t.Fatalf("write header: %v", err)
+	}
+	if _, err := io.Copy(tw, bytes.NewBufferString(content)); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	artifactBytes := buf.Bytes()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(artifactBytes)
+	}))
+	t.Cleanup(server.Close)
+
+	applier := &Applier{
+		DataDir:    dataDir,
+		HTTPClient: server.Client(),
+	}
+
+	plan := Plan{
+		Artifact: PlanArtifact{
+			Version: "1.3.0",
+			URL:     server.URL,
+			SHA256:  "",
+		},
+	}
+	state := config.State{}
+
+	if _, err := applier.Apply(ctx, plan, state); err == nil {
+		t.Fatalf("expected error when binary missing")
+	}
+}
+
 func buildTarGz(t *testing.T, files map[string]string) []byte {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -116,7 +168,7 @@ func buildTarGz(t *testing.T, files map[string]string) []byte {
 	for name, content := range files {
 		if err := tw.WriteHeader(&tar.Header{
 			Name: name,
-			Mode: 0o644,
+			Mode: 0o755,
 			Size: int64(len(content)),
 		}); err != nil {
 			t.Fatalf("write header: %v", err)

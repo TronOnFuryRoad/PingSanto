@@ -201,6 +201,8 @@ func run(ctx context.Context, args []string) error {
 		Logger:     logger,
 		Now:        time.Now,
 	}
+	installer := &upgrade.BinaryInstaller{Logger: logger}
+	restarter := &upgrade.ExecRestarter{Logger: logger}
 
 	upgrader := upgrade.NewManager(
 		upgrade.Config{DataDir: cfg.Agent.DataDir},
@@ -209,6 +211,10 @@ func run(ctx context.Context, args []string) error {
 			PlanFetcher: upgradeClient,
 			Reporter:    upgradeClient,
 			Applier:     planApplier,
+			Installer:   installer,
+			Restarter:   restarter,
+			Args:        os.Args,
+			Env:         os.Environ(),
 			Now:         time.Now,
 		},
 	)

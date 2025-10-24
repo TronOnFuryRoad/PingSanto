@@ -38,6 +38,10 @@ type Dependencies struct {
 	PlanFetcher PlanFetcher
 	Reporter    Reporter
 	Applier     PlanApplier
+	Installer   Installer
+	Restarter   Restarter
+	Args        []string
+	Env         []string
 	Now         func() time.Time
 }
 
@@ -46,10 +50,14 @@ type Manager struct {
 	cfg  Config
 	deps Dependencies
 
-	mu       sync.RWMutex
-	channel  string
-	paused   bool
-	planETag string
+	mu        sync.RWMutex
+	channel   string
+	paused    bool
+	planETag  string
+	installer Installer
+	restarter Restarter
+	args      []string
+	env       []string
 }
 
 // NewManager constructs an Upgrade manager.
@@ -69,7 +77,12 @@ func NewManager(cfg Config, deps Dependencies) *Manager {
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
-	return &Manager{cfg: cfg, deps: deps}
+	mgr := &Manager{cfg: cfg, deps: deps}
+	mgr.installer = deps.Installer
+	mgr.restarter = deps.Restarter
+	mgr.args = append([]string(nil), deps.Args...)
+	mgr.env = append([]string(nil), deps.Env...)
+	return mgr
 }
 
 // Channel returns the latest upgrade channel derived from state.
@@ -210,52 +223,90 @@ func (m *Manager) applyPlan(ctx context.Context, plan Plan, state config.State, 
 		return nil
 	}
 	if m.deps.Applier == nil {
+		m.deps.Logger.Printf("upgrade manager: applier not configured; cannot apply plan version=%s", plan.Artifact.Version)
 		return nil
 	}
 
-	result, err := m.deps.Applier.Apply(ctx, plan, state)
+	applyResult, err := m.deps.Applier.Apply(ctx, plan, state)
 	previousVersion := state.Upgrade.Applied.Version
-
 	state.Upgrade.Applied.LastAttempt = now
-	if err != nil {
-		state.Upgrade.Applied.LastError = err.Error()
-	} else {
-		state.Upgrade.Applied.Version = result.AppliedVersion
-		state.Upgrade.Applied.Path = result.BundlePath
-		state.Upgrade.Applied.AppliedAt = result.AppliedAt
-		state.Upgrade.Applied.LastError = ""
+
+	var installResult InstallResult
+	if err == nil {
+		if m.installer != nil {
+			installResult, err = m.installer.Install(ctx, applyResult.BinaryPath)
+		} else {
+			installResult.TargetPath = applyResult.BinaryPath
+		}
+		if installResult.TargetPath == "" {
+			installResult.TargetPath = applyResult.BinaryPath
+		}
 	}
 
+	if err != nil {
+		state.Upgrade.Applied.LastError = err.Error()
+		if m.deps.UpdateState != nil && m.cfg.DataDir != "" {
+			_ = m.deps.UpdateState(ctx, m.cfg.DataDir, state)
+		}
+		m.report(ctx, plan, state.AgentID, previousVersion, "failed", err.Error(), map[string]any{"stage": "apply"})
+		return err
+	}
+
+	state.Upgrade.Applied.Version = plan.Artifact.Version
+	state.Upgrade.Applied.Path = installResult.TargetPath
+	state.Upgrade.Applied.AppliedAt = applyResult.AppliedAt
+	state.Upgrade.Applied.LastError = ""
+
 	if m.deps.UpdateState != nil && m.cfg.DataDir != "" {
-		if updateErr := m.deps.UpdateState(ctx, m.cfg.DataDir, state); updateErr != nil {
+		if updateErr := m.deps.UpdateState(ctx, m.cfg.DataDir, state); updateErr != nil && m.deps.Logger != nil {
 			m.deps.Logger.Printf("upgrade manager: failed to record apply results: %v", updateErr)
 		}
 	}
 
-	if m.deps.Reporter != nil {
-		status := "success"
-		message := fmt.Sprintf("applied %s", plan.Artifact.Version)
-		if err != nil {
-			status = "failed"
-			message = err.Error()
-		}
-		report := Report{
-			AgentID:         state.AgentID,
-			CurrentVersion:  plan.Artifact.Version,
-			PreviousVersion: previousVersion,
-			Channel:         plan.Channel,
-			Status:          status,
-			StartedAt:       now,
-			CompletedAt:     m.deps.Now().UTC(),
-			Message:         message,
-			Details: map[string]any{
-				"bundle_path": result.BundlePath,
-			},
-		}
-		if repErr := m.deps.Reporter.ReportUpgrade(ctx, report); repErr != nil {
-			m.deps.Logger.Printf("upgrade manager: report failed: %v", repErr)
+	details := map[string]any{
+		"bundle_path":    applyResult.BundlePath,
+		"binary_path":    applyResult.BinaryPath,
+		"installed_path": installResult.TargetPath,
+	}
+	m.report(ctx, plan, state.AgentID, previousVersion, "success", fmt.Sprintf("applied %s", plan.Artifact.Version), details)
+
+	if m.restarter != nil && installResult.TargetPath != "" {
+		restartErr := m.restarter.Restart(ctx, installResult.TargetPath, m.args, m.env)
+		if restartErr != nil {
+			state.Upgrade.Applied.LastError = restartErr.Error()
+			state.Upgrade.Applied.Version = previousVersion
+			if m.installer != nil {
+				if rbErr := m.installer.Rollback(ctx, installResult); rbErr != nil && m.deps.Logger != nil {
+					m.deps.Logger.Printf("upgrade manager: rollback failed: %v", rbErr)
+				}
+			}
+			if m.deps.UpdateState != nil && m.cfg.DataDir != "" {
+				_ = m.deps.UpdateState(ctx, m.cfg.DataDir, state)
+			}
+			m.report(ctx, plan, state.AgentID, previousVersion, "failed", restartErr.Error(), map[string]any{"stage": "restart"})
+			return restartErr
 		}
 	}
 
-	return err
+	return nil
+}
+
+func (m *Manager) report(ctx context.Context, plan Plan, agentID, previousVersion, status, message string, details map[string]any) {
+	if m.deps.Reporter == nil {
+		return
+	}
+	report := Report{
+		AgentID:         agentID,
+		CurrentVersion:  plan.Artifact.Version,
+		PreviousVersion: previousVersion,
+		Channel:         plan.Channel,
+		Status:          status,
+		StartedAt:       m.deps.Now().UTC(),
+		CompletedAt:     m.deps.Now().UTC(),
+		Message:         message,
+		Details:         details,
+	}
+	if err := m.deps.Reporter.ReportUpgrade(ctx, report); err != nil && m.deps.Logger != nil {
+		m.deps.Logger.Printf("upgrade manager: failed to report upgrade status: %v", err)
+	}
 }

@@ -153,6 +153,6 @@
   - Roadblocks: Initial push blocked by missing GitHub credentials; resolved after configuring PAT storage.
   - Pending: Implement the actual upgrade download/apply pipeline and extend reporting once controller apply endpoints are ready.
 - 2025-10-24 15:48 UTC (AI)
-  - Progress: Implemented upgrade artifact download/apply flow with checksum validation and reporting, surfaced plan/applied metadata via `pingsanto-agent upgrades --status`, added root README/LICENSE/.gitignore, and documented the GitHub repo in `AGENTS.md`.
+  - Progress: Implemented upgrade artifact download/apply flow with checksum validation, installer + exec restarter with rollback handling, surfaced plan/applied metadata via `pingsanto-agent upgrades --status`, added root README/LICENSE/.gitignore, and documented the GitHub repo in `AGENTS.md`.
   - Roadblocks: None.
   - Pending: Wire signature verification once production minisign keys are available and complete end-to-end upgrade apply integration tests against the controller.
