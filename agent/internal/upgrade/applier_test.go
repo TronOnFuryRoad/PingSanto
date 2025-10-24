@@ -1,0 +1,135 @@
+package upgrade
+
+import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/pingsantohq/agent/internal/config"
+)
+
+func TestApplierApplySuccess(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+
+	artifactBytes := buildTarGz(t, map[string]string{
+		"README.txt": "hello upgrade",
+	})
+	sum := sha256.Sum256(artifactBytes)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/artifact" {
+			w.Write(artifactBytes)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	applier := &Applier{
+		DataDir:    dataDir,
+		HTTPClient: server.Client(),
+		Now: func() time.Time {
+			return time.Unix(1730005000, 0)
+		},
+	}
+
+	state := config.State{
+		Upgrade: config.UpgradeState{
+			Applied: config.UpgradeAppliedState{
+				Version: "1.0.0",
+			},
+		},
+	}
+
+	plan := Plan{
+		Artifact: PlanArtifact{
+			Version:    "1.1.0",
+			URL:        server.URL + "/artifact",
+			SHA256:     hex.EncodeToString(sum[:]),
+			ForceApply: true,
+		},
+	}
+
+	result, err := applier.Apply(ctx, plan, state)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+	if result.AppliedVersion != "1.1.0" {
+		t.Fatalf("unexpected version: %+v", result)
+	}
+	if result.BundlePath == "" {
+		t.Fatalf("expected bundle path set")
+	}
+	content, err := os.ReadFile(filepath.Join(result.BundlePath, "README.txt"))
+	if err != nil {
+		t.Fatalf("read extracted file: %v", err)
+	}
+	if string(content) != "hello upgrade" {
+		t.Fatalf("unexpected content: %s", content)
+	}
+}
+
+func TestApplierApplyChecksumMismatch(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+
+	artifactBytes := buildTarGz(t, map[string]string{"file.txt": "data"})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(artifactBytes)
+	}))
+	t.Cleanup(server.Close)
+
+	applier := &Applier{
+		DataDir:    dataDir,
+		HTTPClient: server.Client(),
+	}
+
+	plan := Plan{
+		Artifact: PlanArtifact{
+			Version: "1.2.0",
+			URL:     server.URL,
+			SHA256:  "deadbeef",
+		},
+	}
+	state := config.State{}
+
+	if _, err := applier.Apply(ctx, plan, state); err == nil {
+		t.Fatalf("expected checksum error, got nil")
+	}
+}
+
+func buildTarGz(t *testing.T, files map[string]string) []byte {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for name, content := range files {
+		if err := tw.WriteHeader(&tar.Header{
+			Name: name,
+			Mode: 0o644,
+			Size: int64(len(content)),
+		}); err != nil {
+			t.Fatalf("write header: %v", err)
+		}
+		if _, err := io.Copy(tw, bytes.NewBufferString(content)); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	return buf.Bytes()
+}

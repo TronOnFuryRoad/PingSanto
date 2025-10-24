@@ -79,7 +79,8 @@ func planHandler(cfg Config, deps Dependencies) http.HandlerFunc {
 			return
 		}
 
-		plan, etag, err := deps.Store.FetchUpgradePlan(r.Context(), agentID)
+		channel := r.URL.Query().Get("channel")
+		plan, etag, err := deps.Store.FetchUpgradePlan(r.Context(), agentID, channel)
 		if err != nil {
 			if errors.Is(err, store.ErrPlanNotFound) {
 				http.Error(w, "plan not found", http.StatusNotFound)

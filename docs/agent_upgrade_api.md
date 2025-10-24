@@ -52,13 +52,16 @@ Indexes:
 
 ### `GET /api/agent/v1/upgrade/plan`
 
-**Request Headers**
+Agents include their current channel via a query parameter. Example request:
+
 ```
-GET /api/agent/v1/upgrade/plan HTTP/2
+GET /api/agent/v1/upgrade/plan?channel=stable HTTP/2
 Host: central.example.com
 User-Agent: pingsanto-agent/<version>
 Accept: application/json
 ```
+
+If `channel` is omitted the controller assumes `stable`.
 
 **Successful Response (200)**
 ```json
@@ -82,7 +85,9 @@ Accept: application/json
 }
 ```
 
-Fields map directly to `agent_upgrade_plans`. Controllers return an `ETag` header derived from the serialized payload and honour `If-None-Match` for efficient polling. Recommended polling interval: 60s with jitter; agents back off exponentially on `503`.
+Fields map directly to `agent_upgrade_plans`. The `agent_id` in the response is the identifier associated with the stored plan. For channel-wide rollouts the controller returns a synthetic key such as `channel:stable` even though the requesting agent ID differs. Controllers return an `ETag` header derived from the serialized payload and honour `If-None-Match` for efficient polling. Recommended polling interval: 60s with jitter; agents back off exponentially on `503`.
+
+When no agent-specific plan exists the controller falls back to the latest plan for the requested channel before returning `404`.
 
 Error responses:
 | Status | Meaning |
@@ -115,7 +120,8 @@ Error responses:
 
 **Handler Sketch** (`internal/server/server.go` implements this logic)
 ```go
-plan, etag, err := deps.Store.FetchUpgradePlan(ctx, agentID)
+channel := r.URL.Query().Get("channel")
+plan, etag, err := deps.Store.FetchUpgradePlan(ctx, agentID, channel)
 // ...
 if err := deps.Store.RecordUpgradeReport(ctx, req); err != nil { ... }
 ```

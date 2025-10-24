@@ -83,12 +83,40 @@ func TestRunPauseResumeAndChannel(t *testing.T) {
 		t.Fatalf("expected paused false")
 	}
 
+	now := time.Unix(1730000000, 0).UTC()
+	loaded.Upgrade.Plan = config.UpgradePlanState{
+		Version:      "1.2.3",
+		Channel:      "canary",
+		Source:       "channel:canary",
+		ArtifactURL:  "https://example.com/agent.tgz",
+		SignatureURL: "https://example.com/agent.sig",
+		SHA256:       "deadbeef",
+		ForceApply:   true,
+		Notes:        "rollout window",
+		RetrievedAt:  now,
+		Schedule: config.UpgradePlanSchedule{
+			Earliest: &now,
+		},
+	}
+	loaded.Upgrade.Applied = config.UpgradeAppliedState{
+		Version:     "1.2.2",
+		Path:        "/var/lib/pingsanto/agent/upgrades/1.2.2",
+		AppliedAt:   now.Add(-time.Hour),
+		LastAttempt: now.Add(-time.Hour / 2),
+	}
+	if err := config.UpdateState(ctx, dataDir, loaded); err != nil {
+		t.Fatalf("update state with plan: %v", err)
+	}
+
 	out.Reset()
 	if err := Run(ctx, []string{"--config", configPath, "--status"}, deps); err != nil {
 		t.Fatalf("status: %v", err)
 	}
 	statusOutput := out.String()
-	if !strings.Contains(statusOutput, "Upgrade channel") || !strings.Contains(statusOutput, "Auto-upgrades paused") {
+	if !strings.Contains(statusOutput, "Upgrade channel") ||
+		!strings.Contains(statusOutput, "Latest plan:") ||
+		!strings.Contains(statusOutput, "Applied state:") ||
+		!strings.Contains(statusOutput, "Version: 1.2.3") {
 		t.Fatalf("unexpected status output: %s", statusOutput)
 	}
 }

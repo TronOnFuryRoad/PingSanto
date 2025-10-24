@@ -42,6 +42,7 @@ This describes how PingSanto agents are built, signed, published, and registered
 3. Post-release steps (if controller secrets set):
    - Determine channel: tags containing `canary` → `canary`, else `stable`.
    - POST plan to controller admin endpoint with artifact URLs and checksum.
+     Leaving `agent_id` blank in this request records the plan under a synthetic key (`channel:<name>`), allowing every agent on that channel to consume the plan automatically.
 4. Notifications:
    - Slack message with version reference if webhook configured **and** controller toggle permits.
    - Email webhook hit if configured and controller toggle permits.

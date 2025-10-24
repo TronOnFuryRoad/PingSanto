@@ -148,3 +148,11 @@
   - Progress: Renamed PingMon to PingSanto across code, docs, metrics, systemd templates, dashboards, and CI/config paths; moved workspace to `/opt/pingsanto`; validated `go test ./...` for agent and controller.
   - Roadblocks: None.
   - Pending: Coordinate repo/secret renames once the upstream GitHub project is created; monitor downstream integrations for straggler references.
+- 2025-10-24 15:30 UTC (AI)
+  - Progress: Pushed consolidated main branch to the new GitHub remote, updated `AGENTS.md` workspace paths to `/opt/pingsanto`, and wired the upgrade manager to the controller plan API with persisted plan metadata, channel fallback, docs, and tests.
+  - Roadblocks: Initial push blocked by missing GitHub credentials; resolved after configuring PAT storage.
+  - Pending: Implement the actual upgrade download/apply pipeline and extend reporting once controller apply endpoints are ready.
+- 2025-10-24 15:48 UTC (AI)
+  - Progress: Implemented upgrade artifact download/apply flow with checksum validation and reporting, surfaced plan/applied metadata via `pingsanto-agent upgrades --status`, added root README/LICENSE/.gitignore, and documented the GitHub repo in `AGENTS.md`.
+  - Roadblocks: None.
+  - Pending: Wire signature verification once production minisign keys are available and complete end-to-end upgrade apply integration tests against the controller.

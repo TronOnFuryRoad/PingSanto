@@ -1,0 +1,22 @@
+# Global
+.DS_Store
+*.swp
+*.swo
+
+# Go build artifacts
+bin/
+build/
+dist/
+
+# Generated test data
+coverage.*
+
+# Local runtime data
+agent/.cache/
+agent/upgrades/
+
+# Logs and screenshots (runtime artifacts copied here manually)
+logs/*
+!logs/.gitkeep
+screenshots/*
+!screenshots/.gitkeep

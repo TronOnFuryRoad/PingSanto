@@ -40,7 +40,25 @@ func (p *PostgresStore) Close() {
 	p.pool.Close()
 }
 
-func (p *PostgresStore) FetchUpgradePlan(ctx context.Context, agentID string) (UpgradePlanResponse, string, error) {
+func (p *PostgresStore) FetchUpgradePlan(ctx context.Context, agentID string, channel string) (UpgradePlanResponse, string, error) {
+	if plan, etag, err := p.fetchPlanRecord(ctx, agentID); err == nil {
+		return plan, etag, nil
+	} else if err != nil && !errors.Is(err, ErrPlanNotFound) {
+		return UpgradePlanResponse{}, "", err
+	}
+
+	if key := channelPlanKey(channel); key != "" {
+		if plan, etag, err := p.fetchPlanRecord(ctx, key); err == nil {
+			return plan, etag, nil
+		} else if err != nil && !errors.Is(err, ErrPlanNotFound) {
+			return UpgradePlanResponse{}, "", err
+		}
+	}
+
+	return UpgradePlanResponse{}, "", ErrPlanNotFound
+}
+
+func (p *PostgresStore) fetchPlanRecord(ctx context.Context, key string) (UpgradePlanResponse, string, error) {
 	const query = `
 SELECT agent_id, channel, version, artifact_url, artifact_sha256,
        artifact_signature_url, force_apply, schedule_earliest, schedule_latest,
@@ -48,14 +66,14 @@ SELECT agent_id, channel, version, artifact_url, artifact_sha256,
   FROM agent_upgrade_plans
  WHERE agent_id = $1;
 `
-	row := p.pool.QueryRow(ctx, query, agentID)
+	row := p.pool.QueryRow(ctx, query, key)
 	var plan UpgradePlanResponse
 	var artifactURL, artifactSHA, signatureURL, etag, notes string
 	var scheduleEarliest, scheduleLatest *time.Time
 	var updatedAt time.Time
 	var forceApply, paused bool
-	var channel, version string
-	if err := row.Scan(&plan.AgentID, &channel, &version, &artifactURL, &artifactSHA, &signatureURL,
+	var channelValue, version string
+	if err := row.Scan(&plan.AgentID, &channelValue, &version, &artifactURL, &artifactSHA, &signatureURL,
 		&forceApply, &scheduleEarliest, &scheduleLatest, &paused, &notes, &etag, &updatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return UpgradePlanResponse{}, "", ErrPlanNotFound
@@ -63,7 +81,7 @@ SELECT agent_id, channel, version, artifact_url, artifact_sha256,
 		return UpgradePlanResponse{}, "", err
 	}
 
-	plan.Channel = channel
+	plan.Channel = channelValue
 	plan.GeneratedAt = updatedAt.UTC()
 	plan.Artifact = Artifact{
 		Version:      version,
@@ -108,16 +126,18 @@ INSERT INTO agent_upgrade_history (
 }
 
 func (p *PostgresStore) UpsertUpgradePlan(ctx context.Context, input PlanInput) (UpgradePlanResponse, string, error) {
-	if strings.TrimSpace(input.AgentID) == "" {
-		return UpgradePlanResponse{}, "", errors.New("agent_id required")
-	}
 	if strings.TrimSpace(input.Version) == "" {
 		return UpgradePlanResponse{}, "", errors.New("version required")
 	}
+	channel := defaultString(input.Channel, "stable")
+	agentKey := strings.TrimSpace(input.AgentID)
+	if agentKey == "" {
+		agentKey = channelPlanKey(channel)
+	}
 	plan := UpgradePlanResponse{
-		AgentID:     input.AgentID,
+		AgentID:     agentKey,
 		GeneratedAt: time.Now().UTC(),
-		Channel:     defaultString(input.Channel, "stable"),
+		Channel:     channel,
 		Artifact: Artifact{
 			Version:      input.Version,
 			URL:          input.ArtifactURL,

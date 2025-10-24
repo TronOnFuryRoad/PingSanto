@@ -30,8 +30,38 @@ type State struct {
 }
 
 type UpgradeState struct {
-	Channel string `yaml:"channel"`
-	Paused  bool   `yaml:"paused"`
+	Channel string              `yaml:"channel"`
+	Paused  bool                `yaml:"paused"`
+	Plan    UpgradePlanState    `yaml:"plan"`
+	Applied UpgradeAppliedState `yaml:"applied"`
+}
+
+type UpgradePlanState struct {
+	Version      string              `yaml:"version"`
+	Channel      string              `yaml:"channel"`
+	Source       string              `yaml:"source"`
+	Paused       bool                `yaml:"paused"`
+	ArtifactURL  string              `yaml:"artifact_url"`
+	SignatureURL string              `yaml:"signature_url"`
+	SHA256       string              `yaml:"sha256"`
+	ForceApply   bool                `yaml:"force_apply"`
+	Notes        string              `yaml:"notes"`
+	Schedule     UpgradePlanSchedule `yaml:"schedule"`
+	RetrievedAt  time.Time           `yaml:"retrieved_at"`
+	ETag         string              `yaml:"etag"`
+}
+
+type UpgradePlanSchedule struct {
+	Earliest *time.Time `yaml:"earliest,omitempty"`
+	Latest   *time.Time `yaml:"latest,omitempty"`
+}
+
+type UpgradeAppliedState struct {
+	Version     string    `yaml:"version"`
+	Path        string    `yaml:"path"`
+	AppliedAt   time.Time `yaml:"applied_at"`
+	LastAttempt time.Time `yaml:"last_attempt"`
+	LastError   string    `yaml:"last_error"`
 }
 
 func StatePath(dir string) string {

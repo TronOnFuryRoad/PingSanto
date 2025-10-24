@@ -130,9 +130,6 @@ func run(ctx context.Context, args []string) error {
 		runtime.WithMetricsStore(metricsStore),
 	}
 
-	upgrader := upgrade.NewManager(upgrade.Config{DataDir: cfg.Agent.DataDir}, upgrade.Dependencies{Logger: logger})
-	opts = append(opts, runtime.WithUpgradeManager(upgrader))
-
 	if cfg.Run.Workers > 0 {
 		opts = append(opts, runtime.WithWorkerOptions(worker.WithWorkerCount(cfg.Run.Workers)))
 	}
@@ -155,8 +152,6 @@ func run(ctx context.Context, args []string) error {
 		opts = append(opts, runtime.WithBackfillController(backfillCtrl))
 		defer store.Close()
 	}
-
-	rt := runtime.New(opts...)
 
 	tlsConfig, err := certs.LoadClientTLSConfig(state.CertPath, state.KeyPath, state.CAPath, serverURL)
 	if err != nil {
@@ -194,6 +189,32 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("init uplink client: %w", err)
 	}
+
+	upgradeClient, err := upgrade.NewClient(httpClient, serverURL, state.AgentID, logger)
+	if err != nil {
+		return fmt.Errorf("init upgrade client: %w", err)
+	}
+
+	planApplier := &upgrade.Applier{
+		DataDir:    cfg.Agent.DataDir,
+		HTTPClient: httpClient,
+		Logger:     logger,
+		Now:        time.Now,
+	}
+
+	upgrader := upgrade.NewManager(
+		upgrade.Config{DataDir: cfg.Agent.DataDir},
+		upgrade.Dependencies{
+			Logger:      logger,
+			PlanFetcher: upgradeClient,
+			Reporter:    upgradeClient,
+			Applier:     planApplier,
+			Now:         time.Now,
+		},
+	)
+	opts = append(opts, runtime.WithUpgradeManager(upgrader))
+
+	rt := runtime.New(opts...)
 
 	transmitter := rt.NewTransmitter(uplinkClient)
 

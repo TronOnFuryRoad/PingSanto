@@ -101,6 +101,8 @@ func Run(ctx context.Context, args []string, deps Dependencies) error {
 	if *status || modified {
 		fmt.Fprintf(deps.Out, "Upgrade channel: %s\n", printableChannel(state.Upgrade.Channel))
 		fmt.Fprintf(deps.Out, "Auto-upgrades paused: %t\n", state.Upgrade.Paused)
+		writePlanStatus(deps.Out, state.Upgrade.Plan)
+		writeAppliedStatus(deps.Out, state.Upgrade.Applied)
 	}
 	return nil
 }
@@ -110,4 +112,66 @@ func printableChannel(ch string) string {
 		return "(unset)"
 	}
 	return ch
+}
+
+func writePlanStatus(out io.Writer, plan config.UpgradePlanState) {
+	fmt.Fprintln(out, "Latest plan:")
+	if plan.Version == "" {
+		fmt.Fprintln(out, "  (none)")
+		return
+	}
+	fmt.Fprintf(out, "  Version: %s (channel=%s)\n", plan.Version, printableChannel(plan.Channel))
+	if plan.Source != "" {
+		fmt.Fprintf(out, "  Source: %s\n", plan.Source)
+	}
+	if !plan.RetrievedAt.IsZero() {
+		fmt.Fprintf(out, "  Retrieved at: %s\n", formatTime(plan.RetrievedAt))
+	}
+	if plan.ArtifactURL != "" {
+		fmt.Fprintf(out, "  Artifact URL: %s\n", plan.ArtifactURL)
+	}
+	if plan.SignatureURL != "" {
+		fmt.Fprintf(out, "  Signature URL: %s\n", plan.SignatureURL)
+	}
+	if plan.SHA256 != "" {
+		fmt.Fprintf(out, "  SHA256: %s\n", plan.SHA256)
+	}
+	fmt.Fprintf(out, "  Force apply: %t\n", plan.ForceApply)
+	fmt.Fprintf(out, "  Controller paused: %t\n", plan.Paused)
+	if plan.Schedule.Earliest != nil {
+		fmt.Fprintf(out, "  Window earliest: %s\n", formatTime(*plan.Schedule.Earliest))
+	}
+	if plan.Schedule.Latest != nil {
+		fmt.Fprintf(out, "  Window latest: %s\n", formatTime(*plan.Schedule.Latest))
+	}
+	if plan.Notes != "" {
+		fmt.Fprintf(out, "  Notes: %s\n", plan.Notes)
+	}
+}
+
+func writeAppliedStatus(out io.Writer, applied config.UpgradeAppliedState) {
+	fmt.Fprintln(out, "Applied state:")
+	if applied.Version == "" {
+		fmt.Fprintln(out, "  Current version: (unknown)")
+	} else {
+		fmt.Fprintf(out, "  Current version: %s\n", applied.Version)
+	}
+	if applied.Path != "" {
+		fmt.Fprintf(out, "  Install path: %s\n", applied.Path)
+	}
+	if !applied.AppliedAt.IsZero() {
+		fmt.Fprintf(out, "  Applied at: %s\n", formatTime(applied.AppliedAt))
+	}
+	if !applied.LastAttempt.IsZero() {
+		fmt.Fprintf(out, "  Last attempt: %s\n", formatTime(applied.LastAttempt))
+	}
+	if applied.LastError != "" {
+		fmt.Fprintf(out, "  Last error: %s\n", applied.LastError)
+	} else {
+		fmt.Fprintln(out, "  Last error: (none)")
+	}
+}
+
+func formatTime(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
 }

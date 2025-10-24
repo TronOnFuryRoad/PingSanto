@@ -75,7 +75,7 @@ var ErrPlanNotFound = errors.New("upgrade plan not found")
 
 // Store exposes persistence operations required by the upgrade API.
 type Store interface {
-	FetchUpgradePlan(ctx context.Context, agentID string) (UpgradePlanResponse, string, error)
+	FetchUpgradePlan(ctx context.Context, agentID string, channel string) (UpgradePlanResponse, string, error)
 	RecordUpgradeReport(ctx context.Context, report UpgradeReport) error
 	UpsertUpgradePlan(ctx context.Context, input PlanInput) (UpgradePlanResponse, string, error)
 	ListUpgradeHistory(ctx context.Context, agentID string, limit int) ([]UpgradeReport, error)
@@ -86,45 +86,37 @@ type Store interface {
 // NewMemoryStore returns an in-memory implementation useful for scaffolding/testing.
 func NewMemoryStore() Store {
 	return &memoryStore{
-		plans:   map[string]UpgradePlanResponse{},
-		reports: []UpgradeReport{},
+		plans:           map[string]UpgradePlanResponse{},
+		reports:         []UpgradeReport{},
 		notifyOnPublish: true,
 		notifyUpdatedAt: time.Now().UTC(),
 	}
 }
 
 type memoryStore struct {
-	mu      sync.RWMutex
-	plans   map[string]UpgradePlanResponse
-	reports []UpgradeReport
+	mu              sync.RWMutex
+	plans           map[string]UpgradePlanResponse
+	reports         []UpgradeReport
 	notifyOnPublish bool
 	notifyUpdatedAt time.Time
 }
 
-func (m *memoryStore) FetchUpgradePlan(ctx context.Context, agentID string) (UpgradePlanResponse, string, error) {
+func (m *memoryStore) FetchUpgradePlan(ctx context.Context, agentID string, channel string) (UpgradePlanResponse, string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	plan, ok := m.plans[agentID]
-	if !ok {
-		// Fallback to default plan for scaffolding
-		plan = UpgradePlanResponse{
-			AgentID:     agentID,
-			GeneratedAt: time.Now().UTC(),
-			Channel:     "stable",
-			Artifact: Artifact{
-				Version:      "1.0.0",
-				URL:          "https://artifacts.example.com/pingsanto/agent/1.0.0/pingsanto-agent.tgz",
-				SHA256:       "deadbeef",
-				SignatureURL: "https://artifacts.example.com/pingsanto/agent/1.0.0/pingsanto-agent.sig",
-			},
-			Paused: false,
-			Notes:  "scaffolding plan",
+	if plan, ok := m.plans[agentID]; ok {
+		return plan, computeETag(plan), nil
+	}
+
+	if key := channelPlanKey(channel); key != "" {
+		if plan, ok := m.plans[key]; ok {
+			return plan, computeETag(plan), nil
 		}
 	}
 
-	etag := computeETag(plan)
-	return plan, etag, nil
+	plan := defaultPlan(agentID, channel)
+	return plan, computeETag(plan), nil
 }
 
 func (m *memoryStore) RecordUpgradeReport(ctx context.Context, report UpgradeReport) error {
@@ -135,18 +127,21 @@ func (m *memoryStore) RecordUpgradeReport(ctx context.Context, report UpgradeRep
 }
 
 func (m *memoryStore) UpsertUpgradePlan(ctx context.Context, input PlanInput) (UpgradePlanResponse, string, error) {
-	if strings.TrimSpace(input.AgentID) == "" {
-		return UpgradePlanResponse{}, "", errors.New("agent_id required")
-	}
 	if strings.TrimSpace(input.Version) == "" {
 		return UpgradePlanResponse{}, "", errors.New("version required")
 	}
+	channel := defaultString(input.Channel, "stable")
+	key := strings.TrimSpace(input.AgentID)
+	if key == "" {
+		key = channelPlanKey(channel)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	plan := UpgradePlanResponse{
-		AgentID:     input.AgentID,
+		AgentID:     key,
 		GeneratedAt: time.Now().UTC(),
-		Channel:     defaultString(input.Channel, "stable"),
+		Channel:     channel,
 		Artifact: Artifact{
 			Version:      input.Version,
 			URL:          input.ArtifactURL,
@@ -161,7 +156,7 @@ func (m *memoryStore) UpsertUpgradePlan(ctx context.Context, input PlanInput) (U
 		Paused: input.Paused,
 		Notes:  input.Notes,
 	}
-	m.plans[input.AgentID] = plan
+	m.plans[key] = plan
 	etag := computeETag(plan)
 	return plan, etag, nil
 }
@@ -215,4 +210,36 @@ func defaultString(v, def string) string {
 		return def
 	}
 	return v
+}
+
+func normalizeChannel(channel string) string {
+	return strings.ToLower(strings.TrimSpace(channel))
+}
+
+func channelPlanKey(channel string) string {
+	normalized := normalizeChannel(channel)
+	if normalized == "" {
+		normalized = "stable"
+	}
+	return "channel:" + normalized
+}
+
+func defaultPlan(agentID, channel string) UpgradePlanResponse {
+	normalized := normalizeChannel(channel)
+	if normalized == "" {
+		normalized = "stable"
+	}
+	return UpgradePlanResponse{
+		AgentID:     agentID,
+		GeneratedAt: time.Now().UTC(),
+		Channel:     normalized,
+		Artifact: Artifact{
+			Version:      "1.0.0",
+			URL:          "https://artifacts.example.com/pingsanto/agent/1.0.0/pingsanto-agent.tgz",
+			SHA256:       "deadbeef",
+			SignatureURL: "https://artifacts.example.com/pingsanto/agent/1.0.0/pingsanto-agent.sig",
+		},
+		Paused: false,
+		Notes:  "scaffolding plan",
+	}
 }
