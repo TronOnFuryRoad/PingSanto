@@ -168,3 +168,7 @@
   - Progress: Added Minisign signature verification wiring to the agent (embedded/overrideable public key, runtime wiring, and verifier tests), introduced signature-aware applier coverage, and refreshed release documentation for the new key location.
   - Roadblocks: None.
   - Pending: Measure large-artifact verification performance once production builds are available; rotate embedded key before go-live.
+- 2025-10-24 19:58 UTC (AI)
+  - Progress: Added a 32 MiB benchmark for the controller file-backed artifact store to validate the new streaming path and document expected throughput characteristics.
+  - Roadblocks: None.
+  - Pending: Capture benchmark runs on production hardware to tune buffer sizing.
