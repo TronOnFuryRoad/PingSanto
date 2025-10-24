@@ -169,6 +169,10 @@
   - Roadblocks: None.
   - Pending: Measure large-artifact verification performance once production builds are available; rotate embedded key before go-live.
 - 2025-10-24 19:58 UTC (AI)
-  - Progress: Added a 32 MiB benchmark for the controller file-backed artifact store to validate the new streaming path and document expected throughput characteristics.
+  - Progress: Added a 32 MiB benchmark for the controller file-backed artifact store to validate the new streaming path and captured initial numbers (`~173ms/op`, `~194 MB/s`, `~93 KiB` allocations).
   - Roadblocks: None.
   - Pending: Capture benchmark runs on production hardware to tune buffer sizing.
+- 2025-10-24 20:05 UTC (AI)
+  - Progress: Benchmarked Minisign verification in the agent (`~96µs` per verification, `~2.8 KiB` allocations) via the new `BenchmarkMinisignVerifierVerify` harness.
+  - Roadblocks: None.
+  - Pending: Repeat verification benchmarks against full-size release artifacts when available to validate scaling.
