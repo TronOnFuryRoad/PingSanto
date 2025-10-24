@@ -313,11 +313,21 @@ func adminUploadArtifactHandler(cfg Config, deps Dependencies) http.HandlerFunc 
 			return
 		}
 
+		start := time.Now()
 		meta, err := deps.ArtifactStore.Save(r.Context(), req)
 		if err != nil {
+			if errors.Is(err, artifacts.ErrArtifactRequired) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			deps.Logger.Printf("save artifact failed: %v", err)
 			http.Error(w, "unable to save artifact", http.StatusInternalServerError)
 			return
+		}
+		duration := time.Since(start)
+		if deps.Logger != nil {
+			throughput := float64(meta.Size) / duration.Seconds() / (1024 * 1024)
+			deps.Logger.Printf("admin upload: artifact=%s size=%dB duration=%s throughput=%.2fMiB/s", meta.ArtifactName, meta.Size, duration.Round(time.Millisecond), throughput)
 		}
 
 		downloadURL := buildArtifactURL(cfg, r, meta.ArtifactName)

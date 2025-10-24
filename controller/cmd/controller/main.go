@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -51,7 +53,19 @@ func main() {
 	}
 
 	artifactDir := getenvDefault("ARTIFACTS_DIR", "./artifacts")
-	artifactStore, err := artifacts.NewFileStore(artifactDir)
+	bufferBytes, err := getenvInt("ARTIFACT_COPY_BUFFER_BYTES")
+	if err != nil {
+		logger.Fatalf("invalid ARTIFACT_COPY_BUFFER_BYTES: %v", err)
+	}
+	var artifactStore *artifacts.FileStore
+	if bufferBytes > 0 {
+		artifactStore, err = artifacts.NewFileStoreWithBuffer(artifactDir, bufferBytes)
+		if err == nil {
+			logger.Printf("artifact store using buffer size %d bytes", bufferBytes)
+		}
+	} else {
+		artifactStore, err = artifacts.NewFileStore(artifactDir)
+	}
 	if err != nil {
 		logger.Fatalf("failed to initialize artifact store: %v", err)
 	}
@@ -93,4 +107,15 @@ func getenvDefault(key, def string) string {
 		return val
 	}
 	return def
+}
+
+func getenvInt(key string) (int, error) {
+	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
+		v, err := strconv.Atoi(val)
+		if err != nil {
+			return 0, err
+		}
+		return v, nil
+	}
+	return 0, nil
 }

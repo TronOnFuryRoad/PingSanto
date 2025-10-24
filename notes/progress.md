@@ -176,3 +176,7 @@
   - Progress: Benchmarked Minisign verification in the agent (`~96µs` per verification, `~2.8 KiB` allocations) via the new `BenchmarkMinisignVerifierVerify` harness.
   - Roadblocks: None.
   - Pending: Repeat verification benchmarks against full-size release artifacts when available to validate scaling.
+- 2025-10-24 21:35 UTC (AI)
+  - Progress: Tuned the controller artifact pipeline (configurable copy buffer via `ARTIFACT_COPY_BUFFER_BYTES`, detailed upload logging, clearer error responses) and published operator documentation covering runbooks and performance benchmarks.
+  - Roadblocks: None.
+  - Pending: Execute throughput and verification benchmarks on staging hardware to validate production envelopes.

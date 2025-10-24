@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -84,7 +85,7 @@ func newFileStore(dir string, bufSize int) (*FileStore, error) {
 func (s *FileStore) Save(ctx context.Context, req SaveRequest) (Meta, error) {
 	var meta Meta
 	if req.Artifact == nil {
-		return meta, fmt.Errorf("artifact file required")
+		return meta, fmt.Errorf("%w", ErrArtifactRequired)
 	}
 	now := time.Now().UTC()
 	base := sanitizedBase(req.Version, req.ArtifactName)
@@ -165,7 +166,7 @@ func (s *FileStore) Save(ctx context.Context, req SaveRequest) (Meta, error) {
 func (s *FileStore) Open(ctx context.Context, name string) (io.ReadSeekCloser, Meta, error) {
 	var meta Meta
 	if name == "" {
-		return nil, meta, fmt.Errorf("artifact name required")
+		return nil, meta, fmt.Errorf("%w", ErrArtifactNameRequired)
 	}
 	path := filepath.Join(s.dir, filepath.Clean(name))
 	file, err := os.Open(path)
@@ -251,7 +252,7 @@ func NewMemoryStore() *MemoryStore {
 func (m *MemoryStore) Save(ctx context.Context, req SaveRequest) (Meta, error) {
 	var meta Meta
 	if req.Artifact == nil {
-		return meta, fmt.Errorf("artifact required")
+		return meta, fmt.Errorf("%w", ErrArtifactRequired)
 	}
 
 	base := sanitizedBase(req.Version, req.ArtifactName)
@@ -354,3 +355,10 @@ func copyWithBuffer(dst io.Writer, src io.Reader, buf []byte) (int64, error) {
 	}
 	return io.CopyBuffer(dst, src, buf)
 }
+
+var (
+	// ErrArtifactRequired indicates no artifact payload was provided.
+	ErrArtifactRequired = errors.New("artifact required")
+	// ErrArtifactNameRequired indicates the caller did not specify an artifact name.
+	ErrArtifactNameRequired = errors.New("artifact name required")
+)
