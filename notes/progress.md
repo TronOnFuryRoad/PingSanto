@@ -156,3 +156,15 @@
   - Progress: Implemented upgrade artifact download/apply flow with checksum validation, installer + exec restarter with rollback handling, surfaced plan/applied metadata via `pingsanto-agent upgrades --status`, added root README/LICENSE/.gitignore, documented the GitHub repo in `AGENTS.md`, and added an end-to-end integration test covering plan fetch → artifact download → install → restart/report.
   - Roadblocks: None.
   - Pending: Wire signature verification once production minisign keys are available and complete end-to-end upgrade apply integration tests against the controller.
+- 2025-10-24 18:43 UTC (AI)
+  - Progress: Hardened controller artifact upload by enforcing version metadata, updated upgradectl CLI/upload workflow to require versioned submissions, exported the in-memory artifact reader as `ReadSeekNoopCloser`, and added unit coverage for the new validation path.
+  - Roadblocks: None.
+  - Pending: Evaluate large artifact streaming support and end-to-end controller plan GET coverage noted in previous TODOs.
+- 2025-10-24 18:53 UTC (AI)
+  - Progress: Added buffered streaming paths to the controller artifact store with pooled copy buffers and new store tests, plus implemented an end-to-end server test that uploads an artifact, publishes a plan, and verifies agent plan fetch returns the expected download URL and checksum.
+  - Roadblocks: None.
+  - Pending: Revisit performance of large artifact uploads once production scale metrics are available; implement signature verification wiring noted earlier.
+- 2025-10-24 19:32 UTC (AI)
+  - Progress: Added Minisign signature verification wiring to the agent (embedded/overrideable public key, runtime wiring, and verifier tests), introduced signature-aware applier coverage, and refreshed release documentation for the new key location.
+  - Roadblocks: None.
+  - Pending: Measure large-artifact verification performance once production builds are available; rotate embedded key before go-live.

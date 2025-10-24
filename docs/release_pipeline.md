@@ -18,7 +18,7 @@ This describes how PingSanto agents are built, signed, published, and registered
    ```
    - Store `pingsanto-agent.key` securely.
    - Add private key contents to GitHub Actions secret `MINISIGN_SECRET_KEY` (the base64 block between `BEGIN`/`END`).
-   - Replace `agent/keys/pingsanto-agent.pub` with the generated public key so the agent embeds it at build time.
+   - Replace `agent/internal/upgrade/verify/keys/pingsanto-agent.pub` with the generated public key so the agent embeds it at build time (or set `PINGSANTO_AGENT_MINISIGN_PUBKEY` in the runtime environment).
 3. **Controller credentials:**
    - Controller URL (e.g., `https://controller.example.com`).
    - Admin bearer token (set via `ADMIN_BEARER_TOKEN` env on controller). Add to GitHub secret `CONTROLLER_ADMIN_TOKEN`.
@@ -41,8 +41,8 @@ This describes how PingSanto agents are built, signed, published, and registered
    - Upload all assets to GitHub Release (auto-created by workflow).
 3. Post-release steps (if controller secrets set):
    - Determine channel: tags containing `canary` → `canary`, else `stable`.
-   - POST plan to controller admin endpoint with artifact URLs and checksum.
-     Leaving `agent_id` blank in this request records the plan under a synthetic key (`channel:<name>`), allowing every agent on that channel to consume the plan automatically.
+   - Upload the built tarball and signature to the controller artifact endpoint (`POST /api/admin/v1/artifacts`). The step returns download/signature URLs plus the computed SHA-256.
+   - POST the upgrade plan to the controller admin endpoint with the artifact metadata. Leaving `agent_id` blank records the plan under a synthetic key (`channel:<name>`), allowing every agent on that channel to consume the plan automatically.
 4. Notifications:
    - Slack message with version reference if webhook configured **and** controller toggle permits.
    - Email webhook hit if configured and controller toggle permits.

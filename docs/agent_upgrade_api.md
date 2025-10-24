@@ -130,14 +130,41 @@ Reports populate `agent_upgrade_history` and feed alerting/dashboards.
 
 ---
 
-## 4. Artifact Distribution
-- Artifacts are served via HTTPS/CDN.
+## 4. Artifact Upload (Admin)
+
+`POST /api/admin/v1/artifacts`
+
+- Auth: bearer token (`ADMIN_BEARER_TOKEN`).
+- Multipart form fields:
+  - `file` *(required)* – tarball produced by the release pipeline.
+  - `signature` *(optional)* – detached signature corresponding to the artifact.
+  - `version` *(optional)* – version label used when generating filenames.
+
+**Successful Response**
+
+```json
+{
+  "artifact": {
+    "download_url": "https://controller.example.com/artifacts/pingsanto-agent-20251024.tar.gz",
+    "signature_url": "https://controller.example.com/artifacts/pingsanto-agent-20251024.tar.gz.sig",
+    "sha256": "3c6d...",
+    "size": 10485760
+  }
+}
+```
+
+The returned URLs and checksum are passed to `POST /api/admin/v1/upgrade/plan`. Download requests are served from `/artifacts/{name}`.
+
+---
+
+## 5. Artifact Distribution
+- Artifacts are served via HTTPS/CDN or the controller’s artifact endpoint.
 - Agent downloads bundle from `artifact.url`, validates SHA-256, then verifies signature using controller’s root of trust.
 - Controller can host an optional `manifest.json` describing rollback fallbacks or delta patches.
 
 ---
 
-## 5. Upgrade Flow Summary
+## 6. Upgrade Flow Summary
 1. Agent polls `/upgrade/plan` (conditional requests) on startup and every minute.
 2. If controller and local state both indicate pause (unless `force_apply`), agent skips.
 3. If a newer artifact is available within rollout window, agent downloads, verifies, stages, updates, and restarts.
@@ -146,7 +173,7 @@ Reports populate `agent_upgrade_history` and feed alerting/dashboards.
 
 ---
 
-## 6. Security Considerations
+## 7. Security Considerations
 - All APIs require mTLS in production—current scaffolding also supports `X-Agent-ID` header for local dev.
 - Artifacts must be signed and hashed; agent refuses to apply if validation fails.
 - `force_apply` reserved for emergency patches; controllers should audit these events.
@@ -154,7 +181,7 @@ Reports populate `agent_upgrade_history` and feed alerting/dashboards.
 
 ---
 
-## 7. Future Enhancements
+## 8. Future Enhancements
 - Multi-stage rollouts (pre/post hooks, phased waves).
 - Streaming/long-poll channel to reduce GET load.
 - Automatic diagnostics collection on repeated failures.
@@ -162,7 +189,7 @@ Reports populate `agent_upgrade_history` and feed alerting/dashboards.
 
 ---
 
-## 8. Controller Admin APIs (Scaffolding Reference)
+## 9. Controller Admin APIs (Scaffolding Reference)
 Temporary admin endpoints are available in the scaffolding to manage plans until a proper UI/CLI exists:
 
 | Method & Path | Description | Auth |
@@ -176,7 +203,7 @@ These should be replaced with RBAC-aware tooling before production deployment.
 
 ---
 
-## 9. Controller Implementation Notes
+## 10. Controller Implementation Notes
 - `internal/store/postgres.go` contains the production store leveraging the schema above.
 - `migrations/0001_create_upgrade_tables.sql` creates the tables and `pgcrypto` extension.
 - See `controller/README.md` for environment variables and startup instructions.

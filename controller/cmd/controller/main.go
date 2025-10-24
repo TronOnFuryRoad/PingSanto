@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pingsantohq/controller/internal/artifacts"
 	"github.com/pingsantohq/controller/internal/server"
 	"github.com/pingsantohq/controller/internal/store"
 )
@@ -45,11 +46,20 @@ func main() {
 		IdleTimeout:      60 * time.Second,
 		AgentAuthMode:    getenvDefault("AGENT_AUTH_MODE", "header"),
 		AdminBearerToken: os.Getenv("ADMIN_BEARER_TOKEN"),
+		PublicBaseURL:    os.Getenv("PUBLIC_BASE_URL"),
+		ArtifactPath:     getenvDefault("ARTIFACT_PATH", "/artifacts"),
+	}
+
+	artifactDir := getenvDefault("ARTIFACTS_DIR", "./artifacts")
+	artifactStore, err := artifacts.NewFileStore(artifactDir)
+	if err != nil {
+		logger.Fatalf("failed to initialize artifact store: %v", err)
 	}
 
 	srv := server.New(cfg, server.Dependencies{
-		Logger: logger,
-		Store:  st,
+		Logger:        logger,
+		Store:         st,
+		ArtifactStore: artifactStore,
 	})
 
 	shutdownCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)

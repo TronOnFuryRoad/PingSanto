@@ -75,6 +75,30 @@ JSON
           VERSION=${GITHUB_REF#refs/tags/}
           echo "$MINISIGN_SECRET_KEY" | minisign -S -s /dev/stdin -t "PingSanto agent ${VERSION}" -m "$OUTPUT_DIR/${APP_NAME}_${VERSION}_linux_x86_64.tar.gz" -x "$OUTPUT_DIR/${APP_NAME}_${VERSION}.sig"
 
+      - name: Upload artifact to controller storage
+        id: artifact_upload
+        if: ${{ success() && secrets.CONTROLLER_ADMIN_TOKEN != '' && secrets.CONTROLLER_BASE_URL != '' }}
+        env:
+          CONTROLLER_TOKEN: ${{ secrets.CONTROLLER_ADMIN_TOKEN }}
+          CONTROLLER_URL: ${{ secrets.CONTROLLER_BASE_URL }}
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          RESPONSE=$(curl -sf -X POST "$CONTROLLER_URL/api/admin/v1/artifacts" \
+            -H "Authorization: Bearer $CONTROLLER_TOKEN" \
+            -F "version=${VERSION}" \
+            -F "file=@$OUTPUT_DIR/${APP_NAME}_${VERSION}_linux_x86_64.tar.gz" \
+            -F "signature=@$OUTPUT_DIR/${APP_NAME}_${VERSION}.sig")
+          echo "raw_response=$RESPONSE"
+          export RESPONSE
+          python <<'PY' >> $GITHUB_OUTPUT
+import json, os
+payload = json.loads(os.environ.get("RESPONSE", "{}"))
+artifact = payload.get('artifact', {})
+print(f"download_url={artifact.get('download_url','')}")
+print(f"signature_url={artifact.get('signature_url','')}")
+print(f"sha256={artifact.get('sha256','')}")
+PY
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v1
         with:
@@ -95,9 +119,15 @@ JSON
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
           CHANNEL=$(echo "$VERSION" | grep -qi "canary" && echo "canary" || echo "stable")
-          ASSET_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/${APP_NAME}_${VERSION}_linux_x86_64.tar.gz"
-          SIGNATURE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/${APP_NAME}_${VERSION}.sig"
-          CHECKSUM=$(cut -d ' ' -f1 < "$OUTPUT_DIR/sha256.txt")
+          if [ -n "${{ steps.artifact_upload.outputs.download_url }}" ]; then
+            ASSET_URL="${{ steps.artifact_upload.outputs.download_url }}"
+            SIGNATURE_URL="${{ steps.artifact_upload.outputs.signature_url }}"
+            CHECKSUM="${{ steps.artifact_upload.outputs.sha256 }}"
+          else
+            ASSET_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/${APP_NAME}_${VERSION}_linux_x86_64.tar.gz"
+            SIGNATURE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/${APP_NAME}_${VERSION}.sig"
+            CHECKSUM=$(cut -d ' ' -f1 < "$OUTPUT_DIR/sha256.txt")
+          fi
           curl -f -X POST "$CONTROLLER_URL/api/admin/v1/upgrade/plan" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CONTROLLER_TOKEN" \

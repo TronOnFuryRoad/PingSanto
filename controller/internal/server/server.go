@@ -3,14 +3,17 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/pingsantohq/controller/internal/artifacts"
 	"github.com/pingsantohq/controller/internal/store"
 )
 
@@ -22,12 +25,15 @@ type Config struct {
 	IdleTimeout      time.Duration
 	AgentAuthMode    string
 	AdminBearerToken string
+	PublicBaseURL    string
+	ArtifactPath     string
 }
 
 // Dependencies holds external collaborators required by the server.
 type Dependencies struct {
-	Logger *log.Logger
-	Store  store.Store
+	Logger        *log.Logger
+	Store         store.Store
+	ArtifactStore artifacts.Store
 }
 
 // Server wraps http.Server for convenience.
@@ -48,8 +54,14 @@ func New(cfg Config, deps Dependencies) *Server {
 	if deps.Store == nil {
 		deps.Store = store.NewMemoryStore()
 	}
+	if cfg.ArtifactPath == "" {
+		cfg.ArtifactPath = "/artifacts"
+	}
 	if cfg.AgentAuthMode == "" {
 		cfg.AgentAuthMode = "header"
+	}
+	if deps.ArtifactStore == nil {
+		deps.ArtifactStore = artifacts.NewMemoryStore()
 	}
 
 	r := mux.NewRouter()
@@ -59,6 +71,12 @@ func New(cfg Config, deps Dependencies) *Server {
 	r.HandleFunc("/api/admin/v1/upgrade/history/{agent_id}", adminHistoryHandler(cfg, deps)).Methods(http.MethodGet)
 	r.HandleFunc("/api/admin/v1/settings/notifications", adminGetNotificationSettingsHandler(cfg, deps)).Methods(http.MethodGet)
 	r.HandleFunc("/api/admin/v1/settings/notifications", adminUpdateNotificationSettingsHandler(cfg, deps)).Methods(http.MethodPost)
+	r.HandleFunc("/api/admin/v1/artifacts", adminUploadArtifactHandler(cfg, deps)).Methods(http.MethodPost)
+	artifactRoute := strings.TrimRight(cfg.ArtifactPath, "/")
+	if artifactRoute == "" {
+		artifactRoute = "/artifacts"
+	}
+	r.HandleFunc(fmt.Sprintf("%s/{name}", artifactRoute), artifactDownloadHandler(cfg, deps)).Methods(http.MethodGet)
 	r.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 
 	s := &http.Server{
@@ -253,6 +271,111 @@ func adminUpdateNotificationSettingsHandler(cfg Config, deps Dependencies) http.
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(settings)
 	}
+}
+
+func adminUploadArtifactHandler(cfg Config, deps Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !authorizeAdmin(r, cfg.AdminBearerToken) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if deps.ArtifactStore == nil {
+			http.Error(w, "artifact store not configured", http.StatusServiceUnavailable)
+			return
+		}
+		if err := r.ParseMultipartForm(200 << 20); err != nil {
+			http.Error(w, "invalid multipart form", http.StatusBadRequest)
+			return
+		}
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, "file field is required", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+
+		req := artifacts.SaveRequest{
+			Version:      r.FormValue("version"),
+			Artifact:     file,
+			ArtifactName: header.Filename,
+		}
+		req.Version = strings.TrimSpace(req.Version)
+		if req.Version == "" {
+			http.Error(w, "version is required", http.StatusBadRequest)
+			return
+		}
+		if sigFile, sigHeader, err := r.FormFile("signature"); err == nil {
+			req.Signature = sigFile
+			req.SignatureName = sigHeader.Filename
+			defer sigFile.Close()
+		} else if err != nil && err != http.ErrMissingFile {
+			http.Error(w, "invalid signature field", http.StatusBadRequest)
+			return
+		}
+
+		meta, err := deps.ArtifactStore.Save(r.Context(), req)
+		if err != nil {
+			deps.Logger.Printf("save artifact failed: %v", err)
+			http.Error(w, "unable to save artifact", http.StatusInternalServerError)
+			return
+		}
+
+		downloadURL := buildArtifactURL(cfg, r, meta.ArtifactName)
+		response := map[string]any{
+			"artifact": map[string]any{
+				"name":         meta.ArtifactName,
+				"download_url": downloadURL,
+				"sha256":       meta.SHA256,
+				"size":         meta.Size,
+			},
+		}
+		if meta.SignatureName != "" {
+			response["artifact"].(map[string]any)["signature_url"] = buildArtifactURL(cfg, r, meta.SignatureName)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			deps.Logger.Printf("encode artifact response failed: %v", err)
+		}
+	}
+}
+
+func artifactDownloadHandler(cfg Config, deps Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.ArtifactStore == nil {
+			http.Error(w, "artifact store not configured", http.StatusServiceUnavailable)
+			return
+		}
+		name := mux.Vars(r)["name"]
+		reader, meta, err := deps.ArtifactStore.Open(r.Context(), name)
+		if err != nil {
+			if os.IsNotExist(err) {
+				http.NotFound(w, r)
+			} else {
+				deps.Logger.Printf("artifact open failed: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+			return
+		}
+		defer reader.Close()
+		http.ServeContent(w, r, meta.ArtifactName, meta.CreatedAt, reader)
+	}
+}
+
+func buildArtifactURL(cfg Config, r *http.Request, artifactName string) string {
+	base := strings.TrimSpace(cfg.PublicBaseURL)
+	if base == "" {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		base = fmt.Sprintf("%s://%s", scheme, r.Host)
+	}
+	pathPrefix := strings.TrimRight(cfg.ArtifactPath, "/")
+	if pathPrefix == "" {
+		pathPrefix = "/artifacts"
+	}
+	return fmt.Sprintf("%s%s/%s", strings.TrimRight(base, "/"), pathPrefix, artifactName)
 }
 
 func extractAgentID(r *http.Request, mode string) (string, error) {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -158,6 +159,103 @@ func TestApplierApplyMissingBinary(t *testing.T) {
 
 	if _, err := applier.Apply(ctx, plan, state); err == nil {
 		t.Fatalf("expected error when binary missing")
+	}
+}
+
+type stubVerifier struct {
+	err    error
+	called bool
+}
+
+func (s *stubVerifier) Verify(ctx context.Context, artifactPath, signaturePath string) error {
+	s.called = true
+	return s.err
+}
+
+func TestApplierApplyInvokesSignatureVerifier(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+
+	artifactBytes := buildTarGz(t, map[string]string{
+		"bin": "#!/bin/sh\necho hi\n",
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/artifact":
+			w.Write(artifactBytes)
+		case "/signature":
+			w.Write([]byte("sig"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	verifier := &stubVerifier{}
+	applier := &Applier{
+		DataDir:    dataDir,
+		HTTPClient: server.Client(),
+		Verifier:   verifier,
+	}
+
+	plan := Plan{
+		Artifact: PlanArtifact{
+			Version:      "2.0.0",
+			URL:          server.URL + "/artifact",
+			SHA256:       "",
+			SignatureURL: server.URL + "/signature",
+			ForceApply:   true,
+		},
+	}
+	state := config.State{}
+
+	if _, err := applier.Apply(ctx, plan, state); err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+	if !verifier.called {
+		t.Fatalf("expected verifier to be invoked")
+	}
+}
+
+func TestApplierApplySignatureFailure(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+
+	artifactBytes := buildTarGz(t, map[string]string{
+		"bin": "#!/bin/sh\necho hi\n",
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/artifact":
+			w.Write(artifactBytes)
+		case "/signature":
+			w.Write([]byte("sig"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	verifier := &stubVerifier{err: errors.New("invalid signature")}
+	applier := &Applier{
+		DataDir:    dataDir,
+		HTTPClient: server.Client(),
+		Verifier:   verifier,
+	}
+
+	plan := Plan{
+		Artifact: PlanArtifact{
+			Version:      "2.1.0",
+			URL:          server.URL + "/artifact",
+			SignatureURL: server.URL + "/signature",
+		},
+	}
+
+	if _, err := applier.Apply(ctx, plan, config.State{}); err == nil {
+		t.Fatalf("expected verification error")
+	}
+	if !verifier.called {
+		t.Fatalf("expected verifier to be invoked")
 	}
 }
 

@@ -30,6 +30,7 @@ import (
 	"github.com/pingsantohq/agent/internal/runtime"
 	"github.com/pingsantohq/agent/internal/scheduler"
 	"github.com/pingsantohq/agent/internal/upgrade"
+	"github.com/pingsantohq/agent/internal/upgrade/verify"
 	"github.com/pingsantohq/agent/internal/upgradecli"
 	"github.com/pingsantohq/agent/internal/uplink"
 	"github.com/pingsantohq/agent/internal/worker"
@@ -201,6 +202,19 @@ func run(ctx context.Context, args []string) error {
 		Logger:     logger,
 		Now:        time.Now,
 	}
+
+	pubKey := verify.DefaultPublicKey()
+	if envKey := strings.TrimSpace(os.Getenv("PINGSANTO_AGENT_MINISIGN_PUBKEY")); envKey != "" {
+		pubKey = envKey
+	}
+	if strings.TrimSpace(pubKey) == "" {
+		return fmt.Errorf("minisign public key not configured; set PINGSANTO_AGENT_MINISIGN_PUBKEY or update embedded key")
+	}
+	verifier, err := verify.NewMinisignVerifier(pubKey)
+	if err != nil {
+		return fmt.Errorf("init minisign verifier: %w", err)
+	}
+	planApplier.Verifier = verifier
 	installer := &upgrade.BinaryInstaller{Logger: logger}
 	restarter := &upgrade.ExecRestarter{Logger: logger}
 
