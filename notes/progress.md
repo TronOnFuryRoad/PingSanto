@@ -1,0 +1,150 @@
+# Progress Log
+
+- 2025-10-21 19:18 UTC (AI)
+  - Progress: Reviewed `ping_monitoring_diagnostics_full_plan_and_nfrs.md` and `AGENTS.md` to confirm agent requirements; established empty workspace state.
+  - Roadblocks: None encountered.
+  - Pending: Create implementation backlog for agent deliverables; stand up repo scaffolding once backlog is agreed.
+- 2025-10-21 19:22 UTC (AI)
+  - Progress: Drafted staged agent backlog outlining enrollment, scheduling, resilience, telemetry, upgrades, and testing streams.
+  - Roadblocks: None encountered.
+  - Pending: Align on backlog priorities and sequencing with stakeholders; begin repo scaffolding once approved.
+- 2025-10-21 19:27 UTC (AI)
+  - Progress: Bootstrapped agent repo (`/opt/pingsanto/agent`) with Go module, config loader + tests, result envelope types, Rust probe crate stub, dual probe bindings, and Makefile targets for test/fmt/lint/probe-build.
+  - Roadblocks: Go toolchain unavailable on VM, so formatting/tests not executed yet; documented for follow-up.
+  - Pending: Install Go toolchain or adjust workflow to enable `go test`/`go fmt`; proceed to Priority 1 once foundations verified.
+- 2025-10-21 19:29 UTC (AI)
+  - Progress: Installed Go 1.22 via apt (`golang-go`); ran `gofmt` and `go test ./...` in `/opt/pingsanto/agent` to validate scaffolding.
+  - Roadblocks: None—toolchain operational.
+  - Pending: Begin Priority 1 (enrollment + mTLS) implementation.
+- 2025-10-21 19:36 UTC (AI)
+  - Progress: Authored enrollment flow doc; implemented `pingsanto-agent enroll` CLI with state bootstrap, label parsing, token hashing, and stub certificate persistence; added config state helpers and tests.
+  - Roadblocks: None.
+  - Pending: Extend enrollment to perform real mTLS handshake in later priority; plan Priority 2 (scheduler & probes).
+- 2025-10-21 19:44 UTC (AI)
+  - Progress: Wired enrollment command to real HTTPS issuer (`/api/agent/v1/enroll`), writing returned cert/key/CA/config assets; added config writer, HTTP issuer client/tests, and CLI flag for config path; `go test ./...` green.
+  - Roadblocks: None.
+  - Pending: Implement actual TLS client handshake once central API available; move on to Priority 2 planning (scheduler/probe loop).
+- 2025-10-21 19:58 UTC (AI)
+  - Progress: Added mTLS verification via `certs.VerifyConnection` and default enrollment dependency; handshake validated against test TLS server; extended docs and tests.
+  - Roadblocks: None.
+  - Pending: With enrollment handshake completed, proceed to Priority 2 planning for scheduler/probe execution.
+- 2025-10-21 20:01 UTC (AI)
+  - Progress: Kicked off Priority 2 planning for scheduler/probe execution.
+  - Roadblocks: None.
+  - Pending: Draft detailed plan for scheduling engine, worker pool, queue, and probe library integration.
+- 2025-10-21 20:08 UTC (AI)
+  - Progress: Authored scheduler design doc; implemented scheduler, result queue, worker pool, probe batch stub, and runtime wiring with unit tests (`go test ./...`).
+  - Roadblocks: None.
+  - Pending: Prepare for Priority 3 (resilience/backfill) leveraging new runtime scaffolding.
+- 2025-10-21 20:10 UTC (AI)
+  - Progress: Initiated Priority 3 planning (resilience/backfill focus).
+  - Roadblocks: None.
+  - Pending: Draft Priority 3 resilience/backfill plan covering spill-to-disk, reconnect/backfill throttling, gap events, and queue telemetry.
+- 2025-10-21 20:24 UTC (AI)
+  - Progress: Implemented disk spill store (`internal/queue/persist`), integrated spill-aware result queue with runtime options, and added size parsing utilities/tests.
+  - Roadblocks: None.
+  - Pending: Build backfill controller for replay rate limiting and emit gap/backfill events.
+- 2025-10-21 20:30 UTC (AI)
+  - Progress: Added backfill controller with rate limiting (`internal/backfill`), event & metrics scaffolding, and wired queue to emit spill/drop events with stats observers.
+  - Roadblocks: None.
+  - Pending: Integrate backfill controller into future transmitter path and expand telemetry endpoints.
+- 2025-10-22 12:49 UTC (AI)
+  - Progress: Session re-established; reviewed `AGENTS.md`, repo layout, runtime/backfill queue implementations, and verified `go test ./...` passes to confirm codebase state post-disconnect.
+  - Roadblocks: None.
+  - Pending: Resume Priority 3 follow-up—connect backfill controller into transmitter flow and flesh out telemetry exposure.
+- 2025-10-22 12:58 UTC (AI)
+  - Progress: Added `internal/transmit` package with transmitter that drains live queue results and replays persisted batches via the backfill controller, wired runtime helper for constructing transmitters, and unit tests covering retry/ordering semantics.
+  - Roadblocks: None.
+  - Pending: Expand telemetry surface (queue/backfill metrics endpoints) and plan transmitter heartbeat wiring per Priority 3.
+- 2025-10-22 13:03 UTC (AI)
+  - Progress: Built metrics store with Prometheus handler, wired result queue/backfill controller recorders via runtime options, and added coverage ensuring pending bytes/depth counters reflect spill/backfill state.
+  - Roadblocks: None.
+  - Pending: Design heartbeat/uplink integration so transmitter delivers batches to central service.
+- 2025-10-22 13:12 UTC (AI)
+  - Progress: Implemented mTLS uplink client with result envelope upload & heartbeats, added TLS config loader, wired runtime run-loop to start transmitter/heartbeat, and stood up localhost health/metrics server with readiness checks.
+  - Roadblocks: None.
+  - Pending: Flesh out scheduler-to-transmitter wiring with actual monitor configs and enhance readiness diagnostics.
+- 2025-10-22 13:31 UTC (AI)
+  - Progress: Re-established session, reviewed AGENTS.md/repo state, and reran `go test ./...` (green) to confirm runtime/uplink integrations remain intact.
+  - Roadblocks: None.
+  - Pending: Connect scheduler to real monitor assignments via uplink and expand readiness diagnostics per Priority 3.
+- 2025-10-22 13:45 UTC (AI)
+  - Progress: Wired uplink monitor sync loop with ETag support into runtime, added scheduler translation helpers, introduced readiness checker covering queue headroom, monitor freshness/errors, and cert expiry, and expanded cert/health unit tests; `go test ./...` all green.
+  - Roadblocks: None.
+  - Pending: Enhance monitor sync to support incremental diffs and expose readiness state via Prometheus metrics.
+- 2025-10-22 21:35 UTC (AI)
+  - Progress: Enabled incremental monitor diffs in uplink sync with stateful apply helpers, exposed readiness status via Prometheus metrics, and expanded unit coverage (gofmt + go test ./...).
+  - Roadblocks: Sandbox file writes required elevated commands; documented and continued with approvals.
+  - Pending: Monitor incremental diff integration against central API schema once available; extend readiness metrics with alert counters in future priorities.
+- 2025-10-22 21:43 UTC (AI)
+  - Progress: Validated monitor diff contract via new JSON unit tests and doc (`docs/monitor_assignments_api.md`), extended readiness metrics with transition/alert counters, updated health tests, and reran `go test ./...`.
+  - Roadblocks: None.
+  - Pending: Coordinate with central team on exposing transition counters in controller dashboards; consider aggregating readiness alert reasons for alerting once central schema is finalized.
+- 2025-10-23 12:58 UTC (AI)
+  - Progress: Re-reviewed `AGENTS.md` and planning notes to confirm agent scope, validated repository state is unchanged since last session.
+  - Roadblocks: None.
+  - Pending: Follow up with central team on readiness transition counter exposure and draft approach for readiness alert reason aggregation once schema finalizes.
+- 2025-10-23 13:01 UTC (AI)
+  - Progress: Captured readiness telemetry questions for central in `notes/readiness_transition_sync.md` and drafted reason aggregation plan in `docs/readiness_alert_aggregation.md`.
+  - Roadblocks: None.
+  - Pending: Await central feedback on metrics schema to finalize taxonomy and adjust agent metrics/health code accordingly.
+- 2025-10-23 13:14 UTC (AI)
+  - Progress: Implemented categorized readiness metrics (`internal/metrics.Store`, `internal/health.Checker`), updated docs to reflect structured category outputs, and verified `go test ./...` passes.
+  - Roadblocks: None.
+  - Pending: Share new metrics with central team and confirm they align with dashboard ingestion expectations.
+- 2025-10-23 13:22 UTC (AI)
+  - Progress: Drafted central-facing readiness metrics handoff summary in `notes/readiness_metrics_handoff.md` capturing new series, taxonomy, and open questions.
+  - Roadblocks: None.
+  - Pending: Send handoff summary to central team leads and gather feedback on dashboard/alert integration requirements.
+- 2025-10-23 13:25 UTC (AI)
+  - Progress: Prepared outbound message (`notes/readiness_metrics_message.txt`) summarizing readiness metrics changes and questions for central team.
+  - Roadblocks: Awaiting central response.
+  - Pending: Deliver message to central leads and track follow-up items once feedback arrives.
+- 2025-10-23 13:44 UTC (AI)
+  - Progress: Added severity-aware readiness metrics (`{category,severity}` labels), refreshed docs/notes, and confirmed 15 s scrape cadence remains sufficient; updated handoff/message notes to reflect self-managed coordination.
+  - Roadblocks: None.
+  - Pending: Build dashboards that consume the new metrics and revisit monitor `revision` tagging when correlation features require it.
+- 2025-10-23 13:49 UTC (AI)
+  - Progress: Drafted readiness overview dashboard spec (`docs/dashboards/readiness_overview_dashboard.md`) with PromQL queries, layouts, and alert guidance; cross-referenced in readiness docs.
+  - Roadblocks: None.
+  - Pending: Implement Grafana dashboard from the spec and export JSON once sample metrics exist.
+- 2025-10-23 13:53 UTC (AI)
+  - Progress: Generated Grafana-ready JSON (`docs/dashboards/json/readiness_overview.json`) and added import instructions to the dashboard doc.
+  - Roadblocks: None.
+  - Pending: Load the dashboard into Grafana once Prometheus scrape is live; begin planning per-agent drill-down view.
+- 2025-10-23 13:59 UTC (AI)
+  - Progress: Added local monitoring stack guide (`docs/dashboards/local_monitoring_stack.md`) plus Docker Compose/Prometheus configs under `deploy/` for quick Grafana + Prom setup.
+  - Roadblocks: None.
+  - Pending: Launch the stack when ready to validate readiness metrics end-to-end; iterate on per-agent dashboard design.
+- 2025-10-23 14:52 UTC (AI)
+  - Progress: Validated Grafana/Prometheus containers launch successfully after AppArmor tweak; noted that readiness metrics await real agent enrollment (no mock exporter added).
+  - Roadblocks: Agent metrics absent until full enrollment flow is available.
+  - Pending: Resume once central enrollment handshake is ready or provide synthetic metrics if earlier dashboard validation becomes necessary.
+- 2025-10-23 15:08 UTC (AI)
+  - Progress: Implemented `pingsanto-agent diag` CLI with tar.gz bundle support, metrics/journal capture, spill/log inclusion, metadata summary, and unit coverage; updated usage docs and README.
+  - Roadblocks: None.
+  - Pending: Expand diagnostics pack once live logs/metrics formats settle (e.g., richer queue metrics, structured log redaction).
+- 2025-10-23 17:14 UTC (AI)
+  - Progress: Authored per-agent drilldown dashboard plan (`docs/dashboards/per_agent_drilldown_dashboard.md`) and linked roadmap into readiness overview doc.
+  - Roadblocks: Awaiting live agent metrics before exporting Grafana JSON.
+  - Pending: Implement drilldown dashboard once Prometheus data is available.
+- 2025-10-23 17:52 UTC (AI)
+  - Progress: Implemented upgrade CLI (`pingsanto-agent upgrades`), state update helpers, diagnostics upgrade summary, and log redaction; added tests covering pause/resume/channel flows.
+  - Roadblocks: Upgrade manager runtime integration and central API polling deferred until controller endpoints exist.
+  - Pending: Hook upgrade manager into runtime loop once central upgrade directives are available.
+- 2025-10-23 19:07 UTC (AI)
+  - Progress: Published draft controller API contract for agent upgrades (`docs/agent_upgrade_api.md`) detailing plan polling, reporting, and artifact verification.
+  - Roadblocks: None.
+  - Pending: Implement controller endpoints per contract; wire upgrade manager to actual API once available.
+- 2025-10-23 19:55 UTC (AI)
+  - Progress: Scaffolded controller service with PostgreSQL-backed store, mTLS-capable auth, admin APIs, migrations, and env-driven configuration; added in-memory fallback for local runs.
+  - Roadblocks: None (controller still needs real artifact pipeline/integration flows).
+  - Pending: Wire controller to artifact publisher and integrate with production identity/metrics systems.
+- 2025-10-23 21:19 UTC (AI)
+  - Progress: Embedded minisign public key placeholder in agent (`internal/upgrade/verify`), added GitHub release workflow with SBOM/scanning/signing/notifications, implemented controller notification settings API + CLI (`settingsctl`), and updated docs/migrations accordingly.
+  - Roadblocks: Artifact signature verification still pending until upgrade download loop is implemented.
+  - Pending: Replace placeholder public key with real value and implement full artifact verification once upgrade apply flow is built.
+- 2025-10-24 13:05 UTC (AI)
+  - Progress: Renamed PingMon to PingSanto across code, docs, metrics, systemd templates, dashboards, and CI/config paths; moved workspace to `/opt/pingsanto`; validated `go test ./...` for agent and controller.
+  - Roadblocks: None.
+  - Pending: Coordinate repo/secret renames once the upstream GitHub project is created; monitor downstream integrations for straggler references.

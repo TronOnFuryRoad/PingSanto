@@ -1,0 +1,14 @@
+/bin/
+/build/
+/dist/
+/out/
+/coverage/
+/tmp/
+*.log
+*.cache
+*.exe
+*.dll
+*.so
+*.dylib
+/vendor/
+/rust/target/

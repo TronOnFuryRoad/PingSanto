@@ -1,0 +1,161 @@
+name: agent-release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GOOS: linux
+      GOARCH: amd64
+      OUTPUT_DIR: build
+      APP_NAME: pingsanto-agent
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install sbom & scanning tools
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
+          sudo apt-get update && sudo apt-get install -y minisign
+
+      - name: Build agent binary
+        run: |
+          mkdir -p "$OUTPUT_DIR"
+          GOOS=$GOOS GOARCH=$GOARCH go build -o "$OUTPUT_DIR/$APP_NAME" ./agent/cmd/agent
+
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          syft packages ./ --output cyclonedx-json > "$OUTPUT_DIR/SBOM.json"
+
+      - name: Run vulnerability scan
+        run: |
+          grype sbom:"$OUTPUT_DIR/SBOM.json"
+
+      - name: Prepare release artifacts
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          STAGING="$OUTPUT_DIR/${APP_NAME}_${VERSION}_linux_x86_64"
+          mkdir -p "$STAGING"
+          cp "$OUTPUT_DIR/$APP_NAME" "$STAGING/"
+          cp LICENSE "$STAGING/" 2>/dev/null || true
+          cp README.md "$STAGING/" 2>/dev/null || true
+          cat <<JSON > "$STAGING/manifest.json"
+          {
+            "version": "${VERSION}",
+            "build_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "go_version": "$(go version)",
+            "commit": "${GITHUB_SHA}"
+          }
+JSON
+          tar -C "$OUTPUT_DIR" -czf "$OUTPUT_DIR/${APP_NAME}_${VERSION}_linux_x86_64.tar.gz" "${APP_NAME}_${VERSION}_linux_x86_64"
+
+      - name: Compute checksums
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          sha256sum "$OUTPUT_DIR/${APP_NAME}_${VERSION}_linux_x86_64.tar.gz" > "$OUTPUT_DIR/sha256.txt"
+
+      - name: Sign artifact with minisign
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "$MINISIGN_SECRET_KEY" | minisign -S -s /dev/stdin -t "PingSanto agent ${VERSION}" -m "$OUTPUT_DIR/${APP_NAME}_${VERSION}_linux_x86_64.tar.gz" -x "$OUTPUT_DIR/${APP_NAME}_${VERSION}.sig"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            build/${APP_NAME}_${{ github.ref_name }}_linux_x86_64.tar.gz
+            build/${APP_NAME}_${{ github.ref_name }}.sig
+            build/sha256.txt
+            build/SBOM.json
+            build/${APP_NAME}_${{ github.ref_name }}_linux_x86_64/manifest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update controller plan
+        if: ${{ success() && secrets.CONTROLLER_ADMIN_TOKEN != '' && secrets.CONTROLLER_BASE_URL != '' }}
+        env:
+          CONTROLLER_TOKEN: ${{ secrets.CONTROLLER_ADMIN_TOKEN }}
+          CONTROLLER_URL: ${{ secrets.CONTROLLER_BASE_URL }}
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          CHANNEL=$(echo "$VERSION" | grep -qi "canary" && echo "canary" || echo "stable")
+          ASSET_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/${APP_NAME}_${VERSION}_linux_x86_64.tar.gz"
+          SIGNATURE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/${APP_NAME}_${VERSION}.sig"
+          CHECKSUM=$(cut -d ' ' -f1 < "$OUTPUT_DIR/sha256.txt")
+          curl -f -X POST "$CONTROLLER_URL/api/admin/v1/upgrade/plan" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $CONTROLLER_TOKEN" \
+            -d @- <<JSON
+          {
+            "agent_id": "",
+            "channel": "${CHANNEL}",
+            "artifact": {
+              "version": "${VERSION}",
+              "url": "${ASSET_URL}",
+              "sha256": "${CHECKSUM}",
+              "signature_url": "${SIGNATURE_URL}",
+              "force_apply": false
+            },
+            "schedule": {},
+            "paused": false,
+            "notes": "Published ${VERSION} via CI"
+          }
+JSON
+
+      - name: Fetch notification preference
+        id: notify_pref
+        if: ${{ success() }}
+        env:
+          CONTROLLER_TOKEN: ${{ secrets.CONTROLLER_ADMIN_TOKEN }}
+          CONTROLLER_URL: ${{ secrets.CONTROLLER_BASE_URL }}
+        run: |
+          if [ -z "$CONTROLLER_TOKEN" ] || [ -z "$CONTROLLER_URL" ]; then
+            echo "enabled=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          response=$(curl -sf -H "Authorization: Bearer $CONTROLLER_TOKEN" "$CONTROLLER_URL/api/admin/v1/settings/notifications")
+          if [ -z "$response" ]; then
+            echo "enabled=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          enabled=$(python - <<'PY'
+import json, sys
+data=json.loads(sys.stdin.read())
+print('true' if data.get('notify_on_publish', True) else 'false')
+PY
+          <<<"$response")
+          echo "enabled=$enabled" >> $GITHUB_OUTPUT
+
+      - name: Send Slack notification
+        if: ${{ success() && steps.notify_pref.outputs.enabled == 'true' && secrets.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: >-
+            {
+              "text": "PingSanto agent release ${GITHUB_REF_NAME} published."
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Send email notification (optional)
+        if: ${{ success() && steps.notify_pref.outputs.enabled == 'true' && secrets.EMAIL_WEBHOOK_URL != '' }}
+        run: |
+          curl -X POST "$EMAIL_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"subject\":\"PingSanto agent ${GITHUB_REF_NAME} released\",\"body\":\"Download at https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}\"}"

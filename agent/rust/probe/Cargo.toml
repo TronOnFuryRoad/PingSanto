@@ -1,0 +1,11 @@
+[package]
+name = "pingsanto_probe"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[lib]
+name = "pingsanto_probe"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]

@@ -1,0 +1,22 @@
+Subject: PingSanto Agent – Readiness Metrics Update
+
+Hi,
+
+Readiness telemetry update snapshot:
+
+- New Prometheus series are live in the agent build:
+  - `pingsanto_agent_ready_categories_info{category,severity}` tracks current readiness categories with normalized severities.
+  - `pingsanto_agent_ready_category_transitions_total{category,severity}` counts ready→not_ready transitions per category/severity pair.
+- Taxonomy remains `QUEUE_PRESSURE`, `MONITOR_PENDING`, `MONITOR_STALE`, `MONITOR_ERROR`, `CERT_EXPIRING`, `CERT_EXPIRED` with severities (`warning`, `info`, `warning`, `critical`, `warning`, `critical` respectively).
+- Existing metrics (`ready`, `ready_info`, `ready_transitions_total`, `ready_alerts_total`) remain unchanged and compatible with existing dashboards.
+
+Decisions captured:
+1. Dashboards can ingest the new category metrics as-is; no additional labels needed today beyond the `{category,severity}` pairs.
+2. `ready_alerts_total` plus the per-category counters handle alert dedupe once severity metadata (now emitted) is present.
+3. Scrape cadence remains 15 s with no new retention constraints; revisit if future storage limits surface.
+
+Reference docs:
+- `/opt/pingsanto/notes/readiness_metrics_handoff.md`
+- `/opt/pingsanto/agent/docs/readiness_alert_aggregation.md`
+
+— Notes for project log
