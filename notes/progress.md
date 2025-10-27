@@ -180,3 +180,7 @@
   - Progress: Tuned the controller artifact pipeline (configurable copy buffer via `ARTIFACT_COPY_BUFFER_BYTES`, detailed upload logging, clearer error responses) and published operator documentation covering runbooks and performance benchmarks.
   - Roadblocks: None.
   - Pending: Execute throughput and verification benchmarks on staging hardware to validate production envelopes.
+- 2025-10-27 12:29 UTC (AI)
+  - Progress: Extended the upgrade integration test to consume a Minisign-signed artifact (served with signature + checksum), wired the applier to the verifier, and added signed test fixtures to cover the full download→verify→install path.
+  - Roadblocks: None.
+  - Pending: Re-run end-to-end upgrade validation against a live controller once available to confirm on real artifacts.

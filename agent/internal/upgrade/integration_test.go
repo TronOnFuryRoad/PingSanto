@@ -1,9 +1,6 @@
 package upgrade
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
@@ -16,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pingsantohq/agent/internal/config"
+	"github.com/pingsantohq/agent/internal/upgrade/verify"
 )
 
 type captureInstaller struct {
@@ -80,7 +78,16 @@ func TestUpgradeManagerPlanToRestartIntegration(t *testing.T) {
 		t.Fatalf("save state: %v", err)
 	}
 
-	artifactBytes := buildExecutableTar(t)
+	artifactPath := filepath.Join("testdata", "signed_agent.tar.gz")
+	signaturePath := filepath.Join("testdata", "signed_agent.tar.gz.minisig")
+	artifactBytes, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatalf("read artifact fixture: %v", err)
+	}
+	signatureBytes, err := os.ReadFile(signaturePath)
+	if err != nil {
+		t.Fatalf("read signature fixture: %v", err)
+	}
 	var capturedReport Report
 
 	mux := http.NewServeMux()
@@ -93,8 +100,8 @@ func TestUpgradeManagerPlanToRestartIntegration(t *testing.T) {
 			"artifact": map[string]any{
 				"version":       "1.1.0",
 				"url":           serverURL + "/artifacts/agent.tar.gz",
-				"sha256":        "",
-				"signature_url": "",
+				"sha256":        "f2fb4032a49e92954d49330565872fe580193181149feb76fbceb1b6f1afa409",
+				"signature_url": serverURL + "/artifacts/agent.tar.gz.minisig",
 				"force_apply":   true,
 			},
 			"paused": false,
@@ -110,6 +117,10 @@ func TestUpgradeManagerPlanToRestartIntegration(t *testing.T) {
 	mux.HandleFunc("/artifacts/agent.tar.gz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/gzip")
 		w.Write(artifactBytes)
+	})
+	mux.HandleFunc("/artifacts/agent.tar.gz.minisig", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Write(signatureBytes)
 	})
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +149,15 @@ func TestUpgradeManagerPlanToRestartIntegration(t *testing.T) {
 		Logger:     logger,
 		Now:        time.Now,
 	}
+	pubKeyBytes, err := os.ReadFile(filepath.Join("verify", "testdata", "test.pub"))
+	if err != nil {
+		t.Fatalf("read public key fixture: %v", err)
+	}
+	verifier, err := verify.NewMinisignVerifier(string(pubKeyBytes))
+	if err != nil {
+		t.Fatalf("NewMinisignVerifier: %v", err)
+	}
+	applier.Verifier = verifier
 
 	installer := &captureInstaller{target: agentBinary}
 	restarter := &captureRestarter{}
@@ -169,7 +189,7 @@ func TestUpgradeManagerPlanToRestartIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read agent binary: %v", err)
 	}
-	if string(newBytes) != "hello-agent" {
+	if string(newBytes) != "#!/bin/sh\necho \"PingSanto agent placeholder\"\n" {
 		t.Fatalf("expected installed binary content, got %s", newBytes)
 	}
 	if restarter.calls != 1 {
@@ -181,31 +201,4 @@ func TestUpgradeManagerPlanToRestartIntegration(t *testing.T) {
 	if reporter.reports[len(reporter.reports)-1].Status != "success" {
 		t.Fatalf("expected success report, got %+v", reporter.reports[len(reporter.reports)-1])
 	}
-}
-
-func buildExecutableTar(t *testing.T) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-
-	content := []byte("hello-agent")
-	header := &tar.Header{
-		Name: "pingsanto-agent",
-		Mode: 0o755,
-		Size: int64(len(content)),
-	}
-	if err := tw.WriteHeader(header); err != nil {
-		t.Fatalf("write header: %v", err)
-	}
-	if _, err := tw.Write(content); err != nil {
-		t.Fatalf("write content: %v", err)
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatalf("close tar: %v", err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatalf("close gzip: %v", err)
-	}
-	return buf.Bytes()
 }
